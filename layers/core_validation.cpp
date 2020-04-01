@@ -33,6 +33,7 @@
  * Author: Tony Barbour <tony@LunarG.com>
  * Author: John Zulauf <jzulauf@lunarg.com>
  * Author: Shannon McPherson <shannon@lunarg.com>
+ * Author: Jeremy Kniager <jeremyk@lunarg.com>
  */
 
 #include <algorithm>
@@ -925,10 +926,10 @@ bool CoreChecks::ValidateCmdBufDrawState(const CMD_BUFFER_STATE *cb_node, CMD_TY
                                         state.per_set[setIndex].validated_set_binding_req_map.end(),
                                         std::inserter(delta_reqs, delta_reqs.begin()));
                     result |= ValidateDrawState(descriptor_set, delta_reqs, state.per_set[setIndex].dynamicOffsets, cb_node,
-                                                setIndex, function);
+                                                setIndex, function, vuid);
                 } else {
                     result |= ValidateDrawState(descriptor_set, binding_req_map, state.per_set[setIndex].dynamicOffsets, cb_node,
-                                                setIndex, function);
+                                                setIndex, function, vuid);
                 }
             }
         }
@@ -2421,11 +2422,23 @@ bool CoreChecks::ValidateCommandBuffersForSubmit(VkQueue queue, const VkSubmitIn
                 if (set_node) {
                     for (auto pipe : descriptorSet.second) {
                         for (auto binding : pipe.second) {
+                            struct DrawDispatchVuid vuid = {kVUIDUndefined,
+                                                            kVUIDUndefined,
+                                                            kVUIDUndefined,
+                                                            kVUIDUndefined,
+                                                            kVUIDUndefined,
+                                                            kVUIDUndefined,
+                                                            kVUIDUndefined,
+                                                            kVUIDUndefined,
+                                                            kVUIDUndefined,
+                                                            kVUIDUndefined,
+                                                            kVUID_Core_DrawState_ImageSamplerIncompatibleFilter,
+                                                            kVUID_Core_DrawState_ImageSamplerIncompatibleFilter};
                             std::string error;
                             std::vector<uint32_t> dynamicOffsets;
                             // dynamic data isn't allowed in UPDATE_AFTER_BIND, so dynamicOffsets is always empty.
                             skip |= ValidateDescriptorSetBindingData(cb_node, set_node, dynamicOffsets, binding.first,
-                                                                     binding.second, "vkQueueSubmit()");
+                                                                     binding.second, "vkQueueSubmit()", vuid);
                         }
                     }
                 }
