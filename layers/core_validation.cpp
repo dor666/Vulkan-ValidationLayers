@@ -2433,7 +2433,8 @@ bool CoreChecks::ValidateCommandBuffersForSubmit(VkQueue queue, const VkSubmitIn
                                                             kVUIDUndefined,
                                                             kVUIDUndefined,
                                                             kVUID_Core_DrawState_ImageSamplerIncompatibleFilter,
-                                                            kVUID_Core_DrawState_ImageSamplerIncompatibleFilter};
+                                                            kVUID_Core_DrawState_ImageSamplerIncompatibleFilter,
+                                                            kVUID_Core_DrawState_InvalidDescriptorSet};
                             std::string error;
                             std::vector<uint32_t> dynamicOffsets;
                             // dynamic data isn't allowed in UPDATE_AFTER_BIND, so dynamicOffsets is always empty.
