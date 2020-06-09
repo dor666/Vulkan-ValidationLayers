@@ -2460,8 +2460,8 @@ void SyncValidator::PreCallRecordCmdBlitImage(VkCommandBuffer commandBuffer, VkI
     }
 }
 
-bool SyncValidator::DetectDescriptorSetHazard(const AccessContext &context, const CMD_BUFFER_STATE &cmd,
-                                              VkPipelineBindPoint pipelineBindPoint, const char *function) const {
+bool SyncValidator::ValidateDescriptorSet(const AccessContext &context, const CMD_BUFFER_STATE &cmd,
+                                          VkPipelineBindPoint pipelineBindPoint, const char *function) const {
     bool skip = false;
 
     const auto last_bound_it = cmd.lastBound.find(pipelineBindPoint);
@@ -2661,8 +2661,8 @@ void SyncValidator::UpdateDescriptorSetAccessState(AccessContext &context, const
     }
 }
 
-bool SyncValidator::DetectVertexHazard(const AccessContext &context, const CMD_BUFFER_STATE &cmd, uint32_t vertexCount,
-                                       uint32_t firstVertex, const char *function) const {
+bool SyncValidator::ValidateVertex(const AccessContext &context, const CMD_BUFFER_STATE &cmd, uint32_t vertexCount,
+                                   uint32_t firstVertex, const char *function) const {
     bool skip = false;
     const auto last_bound_it = cmd.lastBound.find(VK_PIPELINE_BIND_POINT_GRAPHICS);
     if (last_bound_it == cmd.lastBound.cend()) {
@@ -2734,8 +2734,8 @@ void SyncValidator::UpdateVertexAccessState(AccessContext &context, const Resour
     }
 }
 
-bool SyncValidator::DetectVertexIndexHazard(const AccessContext &context, const CMD_BUFFER_STATE &cmd, uint32_t indexCount,
-                                            uint32_t firstIndex, const char *function) const {
+bool SyncValidator::ValidateVertexIndex(const AccessContext &context, const CMD_BUFFER_STATE &cmd, uint32_t indexCount,
+                                        uint32_t firstIndex, const char *function) const {
     bool skip = false;
     if (cmd.index_buffer_binding.buffer == VK_NULL_HANDLE) return skip;
 
@@ -2755,7 +2755,7 @@ bool SyncValidator::DetectVertexIndexHazard(const AccessContext &context, const 
 
     // TODO: For now, we detect the whole vertex buffer. Index buffer could be changed until SubmitQueue.
     //       We will detect more accurate range in the future.
-    skip |= DetectVertexHazard(context, cmd, UINT32_MAX, 0, function);
+    skip |= ValidateVertex(context, cmd, UINT32_MAX, 0, function);
     return skip;
 }
 
@@ -2777,17 +2777,17 @@ void SyncValidator::UpdateVertexIndexAccessState(AccessContext &context, const R
     UpdateVertexAccessState(context, tag, cmd, UINT32_MAX, 0);
 }
 
-bool SyncValidator::DetectSubpassAttachmentHazard(const AccessContext &context, const CMD_BUFFER_STATE &cmd,
-                                                  const char *function) const {
+bool SyncValidator::ValidateSubpassAttachment(const AccessContext &context, const CMD_BUFFER_STATE &cmd,
+                                              const char *function) const {
     bool skip = false;
 
     const auto &subpass = cmd.activeRenderPass->createInfo.pSubpasses[cmd.activeSubpass];
     const auto *framebuffer = cmd.activeFramebuffer.get();
     VkExtent3D framebuffer_extent = {framebuffer->createInfo.width, framebuffer->createInfo.height, framebuffer->createInfo.layers};
 
-    auto dtct_fn = [&cmd, &function, &framebuffer, &framebuffer_extent, &context](
-                       const SyncValidator &this_, const safe_VkAttachmentReference2 &attachment_ref,
-                       const SyncStageAccessIndex sync_index, const std::string &attachment_desription) {
+    auto validate_fn = [&cmd, &function, &framebuffer, &framebuffer_extent, &context](
+                           const SyncValidator &this_, const safe_VkAttachmentReference2 &attachment_ref,
+                           const SyncStageAccessIndex sync_index, const std::string &attachment_desription) {
         if (attachment_ref.attachment == VK_ATTACHMENT_UNUSED) return false;
         auto attachment_index = attachment_ref.attachment;
         if (framebuffer->createInfo.attachmentCount > attachment_index) {
@@ -2823,28 +2823,29 @@ bool SyncValidator::DetectSubpassAttachmentHazard(const AccessContext &context, 
     if (subpass.inputAttachmentCount && subpass.pInputAttachments) {
         for (uint32_t i = 0; i < subpass.inputAttachmentCount; ++i) {
             std::string attachment_desription = "pInputAttachments #" + std::to_string(i);
-            skip |= dtct_fn(*this, subpass.pInputAttachments[i], SYNC_FRAGMENT_SHADER_INPUT_ATTACHMENT_READ, attachment_desription);
+            skip |=
+                validate_fn(*this, subpass.pInputAttachments[i], SYNC_FRAGMENT_SHADER_INPUT_ATTACHMENT_READ, attachment_desription);
         }
     }
     if (subpass.colorAttachmentCount) {
         if (subpass.pColorAttachments) {
             for (uint32_t i = 0; i < subpass.colorAttachmentCount; ++i) {
                 std::string attachment_desription = "pColorAttachments #" + std::to_string(i);
-                skip |= dtct_fn(*this, subpass.pColorAttachments[i], SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE,
-                                attachment_desription);
+                skip |= validate_fn(*this, subpass.pColorAttachments[i], SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE,
+                                    attachment_desription);
             }
         }
         if (subpass.pResolveAttachments) {
             for (uint32_t i = 0; i < subpass.colorAttachmentCount; ++i) {
                 std::string attachment_desription = "pResolveAttachments #" + std::to_string(i);
-                skip |= dtct_fn(*this, subpass.pResolveAttachments[i], SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE,
-                                attachment_desription);
+                skip |= validate_fn(*this, subpass.pResolveAttachments[i], SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE,
+                                    attachment_desription);
             }
         }
     }
     if (subpass.pDepthStencilAttachment) {
-        skip |= dtct_fn(*this, *subpass.pDepthStencilAttachment, SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE,
-                        "pDepthStencilAttachment");
+        skip |= validate_fn(*this, *subpass.pDepthStencilAttachment, SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE,
+                            "pDepthStencilAttachment");
     }
     return skip;
 }
@@ -2855,9 +2856,9 @@ void SyncValidator::UpdateSubpassAttachmentAccessState(AccessContext &context, c
     const auto *framebuffer = cmd.activeFramebuffer.get();
     VkExtent3D framebuffer_extent = {framebuffer->createInfo.width, framebuffer->createInfo.height, framebuffer->createInfo.layers};
 
-    auto updt_fn = [&framebuffer, &framebuffer_extent, &context, &tag](const SyncValidator &this_,
-                                                                       const safe_VkAttachmentReference2 &attachment_ref,
-                                                                       const SyncStageAccessIndex sync_index) {
+    auto update_fn = [&framebuffer, &framebuffer_extent, &context, &tag](const SyncValidator &this_,
+                                                                         const safe_VkAttachmentReference2 &attachment_ref,
+                                                                         const SyncStageAccessIndex sync_index) {
         if (attachment_ref.attachment == VK_ATTACHMENT_UNUSED) return;
         auto attachment_index = attachment_ref.attachment;
         if (framebuffer->createInfo.attachmentCount > attachment_index) {
@@ -2872,29 +2873,29 @@ void SyncValidator::UpdateSubpassAttachmentAccessState(AccessContext &context, c
 
     if (subpass.inputAttachmentCount && subpass.pInputAttachments) {
         for (uint32_t i = 0; i < subpass.inputAttachmentCount; ++i) {
-            updt_fn(*this, subpass.pInputAttachments[i], SYNC_FRAGMENT_SHADER_INPUT_ATTACHMENT_READ);
+            update_fn(*this, subpass.pInputAttachments[i], SYNC_FRAGMENT_SHADER_INPUT_ATTACHMENT_READ);
         }
     }
     if (subpass.colorAttachmentCount) {
         if (subpass.pColorAttachments) {
             for (uint32_t i = 0; i < subpass.colorAttachmentCount; ++i) {
-                updt_fn(*this, subpass.pColorAttachments[i], SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE);
+                update_fn(*this, subpass.pColorAttachments[i], SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE);
             }
         }
         if (subpass.pResolveAttachments) {
             for (uint32_t i = 0; i < subpass.colorAttachmentCount; ++i) {
-                updt_fn(*this, subpass.pResolveAttachments[i], SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE);
+                update_fn(*this, subpass.pResolveAttachments[i], SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE);
             }
         }
     }
     if (subpass.pDepthStencilAttachment) {
-        updt_fn(*this, *subpass.pDepthStencilAttachment, SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE);
+        update_fn(*this, *subpass.pDepthStencilAttachment, SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE);
     }
 }
 
-bool SyncValidator::DetectIndirectBufferHazard(const AccessContext &context, VkCommandBuffer commandBuffer,
-                                               const VkDeviceSize struct_size, const VkBuffer buffer, const VkDeviceSize offset,
-                                               const uint32_t drawCount, const uint32_t stride, const char *function) const {
+bool SyncValidator::ValidateIndirectBuffer(const AccessContext &context, VkCommandBuffer commandBuffer,
+                                           const VkDeviceSize struct_size, const VkBuffer buffer, const VkDeviceSize offset,
+                                           const uint32_t drawCount, const uint32_t stride, const char *function) const {
     bool skip = false;
     if (drawCount == 0) return skip;
 
@@ -2941,8 +2942,8 @@ void SyncValidator::UpdateIndirectBufferAccessState(AccessContext &context, cons
     }
 }
 
-bool SyncValidator::DetectCountBufferHazard(const AccessContext &context, VkCommandBuffer commandBuffer, VkBuffer buffer,
-                                            VkDeviceSize offset, const char *function) const {
+bool SyncValidator::ValidateCountBuffer(const AccessContext &context, VkCommandBuffer commandBuffer, VkBuffer buffer,
+                                        VkDeviceSize offset, const char *function) const {
     bool skip = false;
 
     const auto *count_buf_state = Get<BUFFER_STATE>(buffer);
@@ -2975,7 +2976,7 @@ bool SyncValidator::PreCallValidateCmdDispatch(VkCommandBuffer commandBuffer, ui
     assert(context);
     if (!context) return skip;
 
-    skip |= DetectDescriptorSetHazard(*context, *cb_state, VK_PIPELINE_BIND_POINT_COMPUTE, "vkCmdDispatch");
+    skip |= ValidateDescriptorSet(*context, *cb_state, VK_PIPELINE_BIND_POINT_COMPUTE, "vkCmdDispatch");
     return skip;
 }
 
@@ -3001,9 +3002,9 @@ bool SyncValidator::PreCallValidateCmdDispatchIndirect(VkCommandBuffer commandBu
     assert(context);
     if (!context) return skip;
 
-    skip |= DetectDescriptorSetHazard(*context, *cb_state, VK_PIPELINE_BIND_POINT_COMPUTE, "vkCmdDispatchIndirect");
-    skip |= DetectIndirectBufferHazard(*context, commandBuffer, sizeof(VkDispatchIndirectCommand), buffer, offset, 1,
-                                       sizeof(VkDispatchIndirectCommand), "vkCmdDispatchIndirect");
+    skip |= ValidateDescriptorSet(*context, *cb_state, VK_PIPELINE_BIND_POINT_COMPUTE, "vkCmdDispatchIndirect");
+    skip |= ValidateIndirectBuffer(*context, commandBuffer, sizeof(VkDispatchIndirectCommand), buffer, offset, 1,
+                                   sizeof(VkDispatchIndirectCommand), "vkCmdDispatchIndirect");
     return skip;
 }
 
@@ -3032,9 +3033,9 @@ bool SyncValidator::PreCallValidateCmdDraw(VkCommandBuffer commandBuffer, uint32
     assert(context);
     if (!context) return skip;
 
-    skip |= DetectDescriptorSetHazard(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, "vkCmdDraw");
-    skip |= DetectVertexHazard(*context, *cb_state, vertexCount, firstVertex, "vkCmdDraw");
-    skip |= DetectSubpassAttachmentHazard(*context, *cb_state, "vkCmdDraw");
+    skip |= ValidateDescriptorSet(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, "vkCmdDraw");
+    skip |= ValidateVertex(*context, *cb_state, vertexCount, firstVertex, "vkCmdDraw");
+    skip |= ValidateSubpassAttachment(*context, *cb_state, "vkCmdDraw");
     return skip;
 }
 
@@ -3064,9 +3065,9 @@ bool SyncValidator::PreCallValidateCmdDrawIndexed(VkCommandBuffer commandBuffer,
     assert(context);
     if (!context) return skip;
 
-    skip |= DetectDescriptorSetHazard(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, "vkCmdDrawIndexed");
-    skip |= DetectVertexIndexHazard(*context, *cb_state, indexCount, firstIndex, "vkCmdDrawIndexed");
-    skip |= DetectSubpassAttachmentHazard(*context, *cb_state, "vkCmdDrawIndexed");
+    skip |= ValidateDescriptorSet(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, "vkCmdDrawIndexed");
+    skip |= ValidateVertexIndex(*context, *cb_state, indexCount, firstIndex, "vkCmdDrawIndexed");
+    skip |= ValidateSubpassAttachment(*context, *cb_state, "vkCmdDrawIndexed");
     return skip;
 }
 
@@ -3098,14 +3099,14 @@ bool SyncValidator::PreCallValidateCmdDrawIndirect(VkCommandBuffer commandBuffer
     assert(context);
     if (!context) return skip;
 
-    skip |= DetectDescriptorSetHazard(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, "vkCmdDrawIndirect");
-    skip |= DetectSubpassAttachmentHazard(*context, *cb_state, "vkCmdDrawIndirect");
-    skip |= DetectIndirectBufferHazard(*context, commandBuffer, sizeof(VkDrawIndirectCommand), buffer, offset, drawCount, stride,
-                                       "vkCmdDrawIndirect");
+    skip |= ValidateDescriptorSet(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, "vkCmdDrawIndirect");
+    skip |= ValidateSubpassAttachment(*context, *cb_state, "vkCmdDrawIndirect");
+    skip |= ValidateIndirectBuffer(*context, commandBuffer, sizeof(VkDrawIndirectCommand), buffer, offset, drawCount, stride,
+                                   "vkCmdDrawIndirect");
 
     // TODO: For now, we detect the whole vertex buffer. VkDrawIndirectCommand buffer could be changed until SubmitQueue.
     //       We will detect the vertex buffer in SubmitQueue in the future.
-    skip |= DetectVertexHazard(*context, *cb_state, UINT32_MAX, 0, "vkCmdDrawIndirect");
+    skip |= ValidateVertex(*context, *cb_state, UINT32_MAX, 0, "vkCmdDrawIndirect");
     return skip;
 }
 
@@ -3142,15 +3143,15 @@ bool SyncValidator::PreCallValidateCmdDrawIndexedIndirect(VkCommandBuffer comman
     assert(context);
     if (!context) return skip;
 
-    skip |= DetectDescriptorSetHazard(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, "vkCmdDrawIndexedIndirect");
-    skip |= DetectSubpassAttachmentHazard(*context, *cb_state, "vkCmdDrawIndexedIndirect");
-    skip |= DetectIndirectBufferHazard(*context, commandBuffer, sizeof(VkDrawIndexedIndirectCommand), buffer, offset, drawCount,
-                                       stride, "vkCmdDrawIndexedIndirect");
+    skip |= ValidateDescriptorSet(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, "vkCmdDrawIndexedIndirect");
+    skip |= ValidateSubpassAttachment(*context, *cb_state, "vkCmdDrawIndexedIndirect");
+    skip |= ValidateIndirectBuffer(*context, commandBuffer, sizeof(VkDrawIndexedIndirectCommand), buffer, offset, drawCount, stride,
+                                   "vkCmdDrawIndexedIndirect");
 
     // TODO: For now, we detect the whole index and vertex buffer.
     //       VkDrawIndexedIndirectCommand buffer could be changed until SubmitQueue.
     //       We will detect the index and vertex buffer in SubmitQueue in the future.
-    skip |= DetectVertexIndexHazard(*context, *cb_state, UINT32_MAX, 0, "vkCmdDrawIndexedIndirect");
+    skip |= ValidateVertexIndex(*context, *cb_state, UINT32_MAX, 0, "vkCmdDrawIndexedIndirect");
     return skip;
 }
 
@@ -3186,15 +3187,15 @@ bool SyncValidator::ValidateCmdDrawIndirectCount(VkCommandBuffer commandBuffer, 
     assert(context);
     if (!context) return skip;
 
-    skip |= DetectDescriptorSetHazard(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, function);
-    skip |= DetectSubpassAttachmentHazard(*context, *cb_state, function);
-    skip |= DetectIndirectBufferHazard(*context, commandBuffer, sizeof(VkDrawIndirectCommand), buffer, offset, maxDrawCount, stride,
-                                       function);
-    skip |= DetectCountBufferHazard(*context, commandBuffer, countBuffer, countBufferOffset, function);
+    skip |= ValidateDescriptorSet(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, function);
+    skip |= ValidateSubpassAttachment(*context, *cb_state, function);
+    skip |= ValidateIndirectBuffer(*context, commandBuffer, sizeof(VkDrawIndirectCommand), buffer, offset, maxDrawCount, stride,
+                                   function);
+    skip |= ValidateCountBuffer(*context, commandBuffer, countBuffer, countBufferOffset, function);
 
     // TODO: For now, we detect the whole vertex buffer. VkDrawIndirectCommand buffer could be changed until SubmitQueue.
     //       We will detect the vertex buffer in SubmitQueue in the future.
-    skip |= DetectVertexHazard(*context, *cb_state, UINT32_MAX, 0, "vkCmdDrawIndirectCount");
+    skip |= ValidateVertex(*context, *cb_state, UINT32_MAX, 0, "vkCmdDrawIndirectCount");
     return skip;
 }
 
@@ -3264,16 +3265,16 @@ bool SyncValidator::ValidateCmdDrawIndexedIndirectCount(VkCommandBuffer commandB
     assert(context);
     if (!context) return skip;
 
-    skip |= DetectDescriptorSetHazard(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, function);
-    skip |= DetectSubpassAttachmentHazard(*context, *cb_state, function);
-    skip |= DetectIndirectBufferHazard(*context, commandBuffer, sizeof(VkDrawIndexedIndirectCommand), buffer, offset, maxDrawCount,
-                                       stride, function);
-    skip |= DetectCountBufferHazard(*context, commandBuffer, countBuffer, countBufferOffset, function);
+    skip |= ValidateDescriptorSet(*context, *cb_state, VK_PIPELINE_BIND_POINT_GRAPHICS, function);
+    skip |= ValidateSubpassAttachment(*context, *cb_state, function);
+    skip |= ValidateIndirectBuffer(*context, commandBuffer, sizeof(VkDrawIndexedIndirectCommand), buffer, offset, maxDrawCount,
+                                   stride, function);
+    skip |= ValidateCountBuffer(*context, commandBuffer, countBuffer, countBufferOffset, function);
 
     // TODO: For now, we detect the whole index and vertex buffer.
     //       VkDrawIndexedIndirectCommand buffer could be changed until SubmitQueue.
     //       We will detect the index and vertex buffer in SubmitQueue in the future.
-    skip |= DetectVertexIndexHazard(*context, *cb_state, UINT32_MAX, 0, "vkCmdDrawIndexedIndirectCount");
+    skip |= ValidateVertexIndex(*context, *cb_state, UINT32_MAX, 0, "vkCmdDrawIndexedIndirectCount");
     return skip;
 }
 
